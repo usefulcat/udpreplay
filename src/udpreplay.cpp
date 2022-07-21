@@ -217,7 +217,8 @@ int main(int argc, char *argv[]) {
         pcap_start.tv_nsec =
             header.ts.tv_usec; // Note PCAP_TSTAMP_PRECISION_NANO
       }
-      if (header.len != header.caplen) {
+      // Note header.len may be less than header.caplen in some recordings
+      if (header.len > header.caplen) {
         ++stats.truncated;
         continue;
       }
