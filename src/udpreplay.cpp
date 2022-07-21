@@ -10,10 +10,57 @@
 #include <netinet/udp.h>
 #include <pcap/pcap.h>
 #include <unistd.h>
+#include <time.h>
+#include <stdlib.h>
 
 #define NANOSECONDS_PER_SECOND 1000000000L
 
+static void fatal_error(const char* what) {
+  std::cerr << what << "\n";
+  exit(1);
+}
+
+// Note: returns a pointer to a static buffer.
+static const char* timestr(const struct timespec &ts) {
+  struct tm t;
+  if (localtime_r(&(ts.tv_sec), &t) == NULL) {
+    fatal_error("localtime_r failed");
+  }
+
+  static char buf[50];
+  size_t len = sizeof(buf);
+  const int bytes_written = strftime(buf, len, "%F %T", &t);
+  if (bytes_written <= 0) {
+    fatal_error("strftime failed (buffer too small)");
+  }
+  len -= size_t(bytes_written);
+
+  snprintf(&buf[bytes_written], len, ".%09ld", ts.tv_nsec);
+
+  return buf;
+}
+
+// Assumes nanosecond timestamps (PCAP_TSTAMP_PRECISION_NANO)
+inline const char* timestr(const pcap_pkthdr &h) {
+  const struct timespec ts = { h.ts.tv_sec, h.ts.tv_usec };
+  return timestr(ts);
+}
+
+inline double to_seconds(const struct timespec& t) {
+  return double(t.tv_sec) + (1e-9 * t.tv_nsec);
+}
+
+struct packet_stats {
+  int sent;       // packets sent
+  int truncated;  // packets skipped b/c header.len != header.caplen
+  int skipped;    // packets skipped for other reasons (non-IP4, non-UDP)
+
+  packet_stats() { reset(); }
+  void reset() { memset(this, 0, sizeof(*this)); }
+};
+
 int main(int argc, char *argv[]) {
+  tzset();
 
   int ifindex = 0;
   int loopback = 0;
@@ -22,9 +69,10 @@ int main(int argc, char *argv[]) {
   int repeat = 1;
   int ttl = -1;
   int broadcast = 0;
+  double display_interval = -1;
 
   int opt;
-  while ((opt = getopt(argc, argv, "i:bls:c:r:t:")) != -1) {
+  while ((opt = getopt(argc, argv, "i:bls:c:r:t:d:")) != -1) {
     switch (opt) {
     case 'i':
       ifindex = if_nametoindex(optarg);
@@ -66,6 +114,9 @@ int main(int argc, char *argv[]) {
     case 'b':
       broadcast = 1;
       break;
+    case 'd':
+      display_interval = std::stod(optarg);
+      break;
     default:
       goto usage;
     }
@@ -86,6 +137,7 @@ int main(int argc, char *argv[]) {
            "  -s speed    replay speed relative to pcap timestamps\n"
            "  -t ttl      packet ttl\n"
            "  -b          enable broadcast (SO_BROADCAST)"
+           "  -d seconds  how often (seconds) to display progress/stats\n"
         << std::endl;
     return 1;
   }
@@ -136,6 +188,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  packet_stats stats;
+
   for (int i = 0; repeat == -1 || i < repeat; i++) {
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = pcap_open_offline_with_tstamp_precision(
@@ -148,6 +202,7 @@ int main(int argc, char *argv[]) {
 
     timespec start = {-1, -1};
     timespec pcap_start = {-1, -1};
+    timespec display_time = {-1, -1};
 
     pcap_pkthdr header;
     const u_char *p;
@@ -157,11 +212,13 @@ int main(int argc, char *argv[]) {
           std::cerr << "clock_gettime: " << strerror(errno) << std::endl;
           return 1;
         }
+        display_time = start;
         pcap_start.tv_sec = header.ts.tv_sec;
         pcap_start.tv_nsec =
             header.ts.tv_usec; // Note PCAP_TSTAMP_PRECISION_NANO
       }
       if (header.len != header.caplen) {
+        ++stats.truncated;
         continue;
       }
       auto eth = reinterpret_cast<const ether_header *>(p);
@@ -172,13 +229,16 @@ int main(int argc, char *argv[]) {
         eth = reinterpret_cast<const ether_header *>(p);
       }
       if (ntohs(eth->ether_type) != ETHERTYPE_IP) {
+        ++stats.skipped;
         continue;
       }
       auto ip = reinterpret_cast<const struct ip *>(p + sizeof(ether_header));
       if (ip->ip_v != 4) {
+        ++stats.skipped;
         continue;
       }
       if (ip->ip_p != IPPROTO_UDP) {
+        ++stats.skipped;
         continue;
       }
       auto udp = reinterpret_cast<const udphdr *>(p + sizeof(ether_header) +
@@ -244,6 +304,20 @@ int main(int argc, char *argv[]) {
       if (n != len) {
         std::cerr << "sendto: " << strerror(errno) << std::endl;
         return 1;
+      }
+
+      ++stats.sent;
+
+      if (display_interval >= 0) {
+        const auto elapsed = to_seconds(now) - to_seconds(display_time);
+        if (elapsed >= display_interval) {
+          printf("%s  pkt/s: %7d  trunc: %6d  skipped: %6d\n",
+                 timestr(header), int(stats.sent / elapsed),
+                 stats.truncated, stats.skipped);
+          fflush(stdout);
+          display_time = now;
+          stats.reset();
+        }
       }
     }
 
