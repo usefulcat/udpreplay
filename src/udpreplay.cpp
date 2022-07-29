@@ -145,8 +145,8 @@ int main(int argc, char *argv[]) {
            "  -r repeat   number of times to loop data (-1 for infinite loop)\n"
            "  -s speed    replay speed relative to pcap timestamps\n"
            "  -t ttl      packet ttl\n"
-           "  -b          enable broadcast (SO_BROADCAST)"
-           "  -d seconds  how often (seconds) to display progress/stats\n"
+           "  -b          enable broadcast (SO_BROADCAST)\n"
+           "  -d seconds  progress display interval (seconds)\n"
            "  -p packets  max number of packets to send\n"
         << std::endl;
     return 1;
