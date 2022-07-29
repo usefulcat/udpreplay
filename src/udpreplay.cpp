@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
+#include <limits>
 
 #define NANOSECONDS_PER_SECOND 1000000000L
 
@@ -51,9 +52,9 @@ inline double to_seconds(const struct timespec& t) {
 }
 
 struct packet_stats {
-  int sent;       // packets sent
-  int truncated;  // packets skipped b/c header.len != header.caplen
-  int skipped;    // packets skipped for other reasons (non-IP4, non-UDP)
+  long long sent;       // packets sent
+  long long truncated;  // packets skipped b/c header.len != header.caplen
+  long long skipped;    // packets skipped for other reasons (non-IP4, non-UDP)
 
   packet_stats() { reset(); }
   void reset() { memset(this, 0, sizeof(*this)); }
@@ -69,10 +70,11 @@ int main(int argc, char *argv[]) {
   int repeat = 1;
   int ttl = -1;
   int broadcast = 0;
+  long long max_packets = std::numeric_limits<long long>::max();
   double display_interval = -1;
 
   int opt;
-  while ((opt = getopt(argc, argv, "i:bls:c:r:t:d:")) != -1) {
+  while ((opt = getopt(argc, argv, "i:bls:c:r:t:d:p:")) != -1) {
     switch (opt) {
     case 'i':
       ifindex = if_nametoindex(optarg);
@@ -117,6 +119,13 @@ int main(int argc, char *argv[]) {
     case 'd':
       display_interval = std::stod(optarg);
       break;
+    case 'p':
+      max_packets = std::stoll(optarg);
+      if (max_packets < 0) {
+        std::cerr << "max_packets must be non-negative\n";
+        return 1;
+      }
+      break;
     default:
       goto usage;
     }
@@ -138,6 +147,7 @@ int main(int argc, char *argv[]) {
            "  -t ttl      packet ttl\n"
            "  -b          enable broadcast (SO_BROADCAST)"
            "  -d seconds  how often (seconds) to display progress/stats\n"
+           "  -p packets  max number of packets to send\n"
         << std::endl;
     return 1;
   }
@@ -189,8 +199,10 @@ int main(int argc, char *argv[]) {
   }
 
   packet_stats stats;
+  long long packet_count = 0;
 
-  for (int i = 0; repeat == -1 || i < repeat; i++) {
+  for (int i = 0; (repeat == -1 || i < repeat)
+                  && packet_count < max_packets; i++) {
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = pcap_open_offline_with_tstamp_precision(
         argv[optind], PCAP_TSTAMP_PRECISION_NANO, errbuf);
@@ -308,17 +320,22 @@ int main(int argc, char *argv[]) {
       }
 
       ++stats.sent;
+      ++packet_count;
 
       if (display_interval >= 0) {
         const auto elapsed = to_seconds(now) - to_seconds(display_time);
         if (elapsed >= display_interval) {
-          printf("%s  pkt/s: %7d  trunc: %6d  skipped: %6d\n",
+          printf("%s  pkt/s: %7d  trunc: %6lld  skipped: %6lld\n",
                  timestr(header), int(stats.sent / elapsed),
                  stats.truncated, stats.skipped);
           fflush(stdout);
           display_time = now;
           stats.reset();
         }
+      }
+
+      if (packet_count >= max_packets) {
+        break;
       }
     }
 
