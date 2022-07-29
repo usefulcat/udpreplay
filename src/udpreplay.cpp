@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
   int ifindex = 0;
   int loopback = 0;
   double speed = 1;
-  int interval = -1;
+  long long interval = -1;
   int repeat = 1;
   int ttl = -1;
   int broadcast = 0;
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
       }
       break;
     case 'c':
-      interval = std::stoi(optarg);
+      interval = std::stoll(optarg);
       if (interval < 0) {
         std::cerr << "interval must be non-negative integer" << std::endl;
         return 1;
@@ -141,7 +141,7 @@ int main(int argc, char *argv[]) {
            "\n"
            "  -i iface    interface to send packets through\n"
            "  -l          enable loopback\n"
-           "  -c millisec constant milliseconds between packets\n"
+           "  -c microsec constant microseconds between packets\n"
            "  -r repeat   number of times to loop data (-1 for infinite loop)\n"
            "  -s speed    replay speed relative to pcap timestamps\n"
            "  -t ttl      packet ttl\n"
@@ -258,8 +258,8 @@ int main(int argc, char *argv[]) {
                                                   ip->ip_hl * 4);
       if (interval != -1) {
         // Use constant packet rate
-        deadline.tv_sec += interval / 1000L;
-        deadline.tv_nsec += (interval * 1000000L) % NANOSECONDS_PER_SECOND;
+        deadline.tv_sec += interval / 1000000LL;
+        deadline.tv_nsec += (interval * 1000LL) % NANOSECONDS_PER_SECOND;
       } else {
         // Next packet deadline = start + (packet ts - first packet ts) * speed
         int64_t delta =
