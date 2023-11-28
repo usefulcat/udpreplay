@@ -53,7 +53,7 @@ inline double to_seconds(const struct timespec& t) {
 
 struct packet_stats {
   long long sent;       // packets sent
-  long long truncated;  // packets skipped b/c header.len != header.caplen
+  long long truncated;  // packets skipped b/c header.len > header.caplen
   long long skipped;    // packets skipped for other reasons (non-IP4, non-UDP)
 
   packet_stats() { reset(); }
